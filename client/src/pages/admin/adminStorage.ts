@@ -8,9 +8,7 @@ export function loadSavedBookingsSub(): BookingsSub {
   try {
     const v = localStorage.getItem(LS_ADMIN_BOOKINGS_TAB);
     if (v === "list" || v === "calendar") return v;
-  } catch {
-    /* ignore */
-  }
+  } catch {}
   return "list";
 }
 
@@ -18,24 +16,18 @@ export function loadSavedCalView(): CalView {
   try {
     const v = localStorage.getItem(LS_ADMIN_CAL_VIEW);
     if (v === "week" || v === "day") return v;
-  } catch {
-    /* ignore */
-  }
+  } catch {}
   return "week";
 }
 
 export function persistBookingsSub(bookingsSub: BookingsSub) {
   try {
     localStorage.setItem(LS_ADMIN_BOOKINGS_TAB, bookingsSub);
-  } catch {
-    /* ignore */
-  }
+  } catch {}
 }
 
 export function persistCalView(calView: CalView) {
   try {
     localStorage.setItem(LS_ADMIN_CAL_VIEW, calView);
-  } catch {
-    /* ignore */
-  }
+  } catch {}
 }

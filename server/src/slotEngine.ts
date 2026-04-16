@@ -65,11 +65,6 @@ function overlapsMs(a0: number, a1: number, b0: number, b1: number): boolean {
   return a0 < b1 && b0 < a1;
 }
 
-/**
- * Bookings block the half-open interval [start, end + bufferMinutes). A candidate slot [s, e) is unavailable
- * if it overlaps that blocked interval. This loader returns only rows that could overlap any slot in
- * [rangeStartIso, rangeEndIso) under that rule (plus optional excludeBookingId).
- */
 function loadBookingIntervalsOverlapping(
   rangeStartIso: string,
   rangeEndIso: string,
