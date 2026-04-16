@@ -1,25 +1,14 @@
-# Dependencies & build output
 node_modules
 dist
-
-# Local database (SQLite + WAL mode sidecars)
 server/data/
 *.db-shm
 *.db-wal
-
-# Environment
 .env
 .env.local
 .env.*.local
-
-# Logs
 *.log
-
-# OS & editors
 .DS_Store
 Thumbs.db
 Desktop.ini
 .idea
-
-# Tooling
 *.tsbuildinfo
