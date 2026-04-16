@@ -4,19 +4,22 @@ import { BrowserRouter } from "react-router-dom";
 import { ThemeProvider } from "./context/ThemeContext";
 import { LocaleProvider } from "./context/LocaleContext";
 import { QueryProvider } from "./providers/QueryProvider";
+import { AppMuiProvider } from "./theme/AppMuiProvider";
 import App from "./App";
 import "./styles/global.css";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <ThemeProvider>
-      <LocaleProvider>
-        <QueryProvider>
-          <BrowserRouter>
-            <App />
-          </BrowserRouter>
-        </QueryProvider>
-      </LocaleProvider>
+      <AppMuiProvider>
+        <LocaleProvider>
+          <QueryProvider>
+            <BrowserRouter>
+              <App />
+            </BrowserRouter>
+          </QueryProvider>
+        </LocaleProvider>
+      </AppMuiProvider>
     </ThemeProvider>
   </StrictMode>
 );

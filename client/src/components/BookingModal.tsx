@@ -1,11 +1,28 @@
-import { useEffect, useMemo, useState } from "react";
-import { useForm } from "react-hook-form";
+import CloseIcon from "@mui/icons-material/Close";
+import {
+  Alert,
+  Box,
+  Button,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  FormControl,
+  IconButton,
+  InputLabel,
+  MenuItem,
+  Select,
+  TextField,
+  Typography,
+} from "@mui/material";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useLocale } from "../context/LocaleContext";
+import { useEffect, useMemo, useState } from "react";
+import { Controller, useForm } from "react-hook-form";
 import { createBooking, sendMockConfirmation, type Service } from "../api/client";
 import { useServicesQuery } from "../api/hooks";
 import { invalidateAfterBookingWrite } from "../api/queryInvalidation";
 import { APP_TIMEZONE } from "../constants/timezone";
+import { useLocale } from "../context/LocaleContext";
 import { formatTimeRangeInZone, normalizeIsoUtcForApi } from "../lib/timeDisplay";
 
 type Props = {
@@ -33,6 +50,7 @@ export function BookingModal({ open, start, end, notificationsEnabled, onClose }
 
   const {
     register,
+    control,
     handleSubmit,
     reset,
     setError,
@@ -48,10 +66,10 @@ export function BookingModal({ open, start, end, notificationsEnabled, onClose }
       const { id } = await createBooking({
         name: data.name.trim(),
         email: data.email.trim(),
-        start_time: normalizeIsoUtcForApi(start),
-        end_time: normalizeIsoUtcForApi(end),
+        startTime: normalizeIsoUtcForApi(start),
+        endTime: normalizeIsoUtcForApi(end),
         notes: data.notes.trim(),
-        service_id,
+        serviceId: service_id,
       });
       if (notificationsEnabled) {
         try {
@@ -77,21 +95,10 @@ export function BookingModal({ open, start, end, notificationsEnabled, onClose }
     }
   }, [open, reset, clearErrors]);
 
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
-
   const slotRangeLabel = useMemo(() => {
     if (!start || !end) return null;
     return formatTimeRangeInZone(start, end, APP_TIMEZONE);
   }, [start, end]);
-
-  if (!open) return null;
 
   async function onValid(data: BookingFormValues) {
     clearErrors();
@@ -114,118 +121,129 @@ export function BookingModal({ open, start, end, notificationsEnabled, onClose }
       : null;
 
   return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal" role="dialog" aria-modal="true" aria-labelledby="booking-modal-title">
-        <div className="modal__head">
-          <h2 id="booking-modal-title" className="modal__title">
-            {t("bookingTitle")}
-          </h2>
-          <button type="button" className="modal__close btn-ghost btn-sm" onClick={onClose} aria-label={t("bookingClose")}>
-            ×
-          </button>
-        </div>
-        <p className="muted" style={{ marginTop: 0 }}>
+    <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm" scroll="paper">
+      <DialogTitle sx={{ pr: 5 }} id="booking-modal-title">
+        {t("bookingTitle")}
+        <IconButton
+          aria-label={t("bookingClose")}
+          onClick={onClose}
+          sx={{ position: "absolute", right: 8, top: 8 }}
+        >
+          <CloseIcon />
+        </IconButton>
+      </DialogTitle>
+      <DialogContent dividers>
+        <Typography variant="body2" color="text.secondary">
           {t("bookingSubTimes")}
-        </p>
+        </Typography>
         {slotRangeLabel && (
-          <p className="muted" style={{ marginTop: "0.35rem", fontWeight: 600, color: "var(--text)" }}>
+          <Typography variant="body2" sx={{ mt: 1, fontWeight: 600 }}>
             {slotRangeLabel}
-          </p>
+          </Typography>
         )}
-        {servicesQuery.isPending && <p className="muted">{t("bookLoading")}</p>}
+        {servicesQuery.isPending && (
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+            {t("bookLoading")}
+          </Typography>
+        )}
         {servicesError && (
-          <p className="error-text" role="alert">
+          <Alert severity="error" sx={{ mt: 2 }} role="alert">
             {servicesError}
-          </p>
+          </Alert>
         )}
         {sent ? (
-          <p className="success-banner">{sent}</p>
+          <Alert severity="success" sx={{ mt: 2 }}>
+            {sent}
+          </Alert>
         ) : (
-          <form onSubmit={handleSubmit(onValid)} noValidate>
-            <div className="field">
-              <label htmlFor="bm-name">{t("bookingName")}</label>
-              <input
-                id="bm-name"
-                autoFocus
-                autoComplete="name"
-                maxLength={200}
-                aria-invalid={errors.name ? true : undefined}
-                aria-describedby={errors.name ? "bm-name-err" : undefined}
-                {...register("name", { required: t("valNameRequired"), maxLength: { value: 200, message: t("valMaxChars") } })}
-              />
-              {errors.name && (
-                <p id="bm-name-err" className="error-text" role="alert">
-                  {errors.name.message}
-                </p>
-              )}
-            </div>
-            <div className="field">
-              <label htmlFor="bm-email">{t("bookingEmail")}</label>
-              <input
-                id="bm-email"
-                type="email"
-                autoComplete="email"
-                maxLength={320}
-                aria-invalid={errors.email ? true : undefined}
-                aria-describedby={errors.email ? "bm-email-err" : undefined}
-                {...register("email", {
-                  required: t("valEmailRequired"),
-                  pattern: {
-                    value: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
-                    message: t("valEmailInvalid"),
-                  },
-                })}
-              />
-              {errors.email && (
-                <p id="bm-email-err" className="error-text" role="alert">
-                  {errors.email.message}
-                </p>
-              )}
-            </div>
+          <Box component="form" id="booking-form" onSubmit={handleSubmit(onValid)} noValidate sx={{ mt: 2 }}>
+            <TextField
+              {...register("name", { required: t("valNameRequired"), maxLength: { value: 200, message: t("valMaxChars") } })}
+              label={t("bookingName")}
+              fullWidth
+              required
+              margin="normal"
+              autoComplete="name"
+              autoFocus
+              slotProps={{ htmlInput: { maxLength: 200 } }}
+              error={!!errors.name}
+              helperText={errors.name?.message}
+              disabled={!!servicesError}
+            />
+            <TextField
+              {...register("email", {
+                required: t("valEmailRequired"),
+                pattern: {
+                  value: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
+                  message: t("valEmailInvalid"),
+                },
+              })}
+              label={t("bookingEmail")}
+              type="email"
+              fullWidth
+              required
+              margin="normal"
+              autoComplete="email"
+              slotProps={{ htmlInput: { maxLength: 320 } }}
+              error={!!errors.email}
+              helperText={errors.email?.message}
+              disabled={!!servicesError}
+            />
             {services.length > 0 && (
-              <div className="field">
-                <label htmlFor="bm-service">{t("bookingServiceOptional")}</label>
-                <select id="bm-service" {...register("service_id")}>
-                  <option value="">—</option>
-                  {services.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                      {s.price != null ? ` ($${s.price})` : ""}
-                    </option>
-                  ))}
-                </select>
-                <p className="muted" style={{ fontSize: "0.78rem", marginTop: "0.25rem" }}>
+              <FormControl fullWidth margin="normal" disabled={!!servicesError}>
+                <InputLabel id="bm-service-label">{t("bookingServiceOptional")}</InputLabel>
+                <Controller
+                  name="service_id"
+                  control={control}
+                  render={({ field }) => (
+                    <Select labelId="bm-service-label" label={t("bookingServiceOptional")} {...field}>
+                      <MenuItem value="">—</MenuItem>
+                      {services.map((s) => (
+                        <MenuItem key={s.id} value={String(s.id)}>
+                          {s.name}
+                          {s.price != null ? ` ($${s.price})` : ""}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  )}
+                />
+                <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: "block" }}>
                   {t("bookingServiceHint")}
-                </p>
-              </div>
+                </Typography>
+              </FormControl>
             )}
-            <div className="field">
-              <label htmlFor="bm-notes">{t("bookingNotesOptional")}</label>
-              <textarea id="bm-notes" rows={3} maxLength={2000} {...register("notes", { maxLength: 2000 })} />
-            </div>
+            <TextField
+              {...register("notes", { maxLength: 2000 })}
+              label={t("bookingNotesOptional")}
+              fullWidth
+              margin="normal"
+              multiline
+              minRows={3}
+              slotProps={{ htmlInput: { maxLength: 2000 } }}
+              disabled={!!servicesError}
+            />
             {errors.root && (
-              <p className="error-text" role="alert">
+              <Alert severity="error" sx={{ mt: 2 }} role="alert">
                 {errors.root.message}
-              </p>
+              </Alert>
             )}
-            <div className="modal__actions">
-              <button type="button" className="btn btn-ghost" onClick={onClose}>
-                {t("bookingCancel")}
-              </button>
-              <button type="submit" className="btn" disabled={saving || !!servicesError}>
-                {saving ? t("bookingSaving") : t("bookingConfirm")}
-              </button>
-            </div>
-          </form>
+          </Box>
         )}
-        {sent && (
-          <div className="modal__actions" style={{ marginTop: "1rem" }}>
-            <button type="button" className="btn" onClick={onClose}>
-              {t("bookingDone")}
-            </button>
-          </div>
+      </DialogContent>
+      <DialogActions sx={{ px: 3, py: 2 }}>
+        {sent ? (
+          <Button variant="contained" onClick={onClose}>
+            {t("bookingDone")}
+          </Button>
+        ) : (
+          <>
+            <Button onClick={onClose}>{t("bookingCancel")}</Button>
+            <Button type="submit" form="booking-form" variant="contained" disabled={saving || !!servicesError}>
+              {saving ? t("bookingSaving") : t("bookingConfirm")}
+            </Button>
+          </>
         )}
-      </div>
-    </div>
+      </DialogActions>
+    </Dialog>
   );
 }

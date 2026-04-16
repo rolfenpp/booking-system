@@ -22,9 +22,9 @@ function buildEventTooltip(
     const parts: string[] = [
       booking.name,
       booking.email,
-      formatTimeRangeInZone(booking.start_time, booking.end_time, tz),
+      formatTimeRangeInZone(booking.startTime, booking.endTime, tz),
     ];
-    if (booking.service_name) parts.push(booking.service_name);
+    if (booking.serviceName) parts.push(booking.serviceName);
     if (booking.notes?.trim()) {
       const n = booking.notes.trim();
       parts.push(`${t("calTooltipNotes")}: ${n.length > 100 ? `${n.slice(0, 100)}…` : n}`);
@@ -156,8 +156,8 @@ export function ScheduleCalendar({
     const title = arg.event.title ?? "";
     return (
       <div className="fc-timegrid-event-inline">
-        {time ? <span className="fc-timegrid-event-inline__time">{time}</span> : null}
-        {title ? <span className="fc-timegrid-event-inline__title">{title}</span> : null}
+        {time && <span className="fc-timegrid-event-inline__time">{time}</span>}
+        {title && <span className="fc-timegrid-event-inline__title">{title}</span>}
       </div>
     );
   }, []);

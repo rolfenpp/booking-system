@@ -65,11 +65,31 @@ function overlapsMs(a0: number, a1: number, b0: number, b1: number): boolean {
   return a0 < b1 && b0 < a1;
 }
 
-function loadBookingIntervals(excludeBookingId?: number): BookingIntervalRow[] {
+/**
+ * Bookings block the half-open interval [start, end + bufferMinutes). A candidate slot [s, e) is unavailable
+ * if it overlaps that blocked interval. This loader returns only rows that could overlap any slot in
+ * [rangeStartIso, rangeEndIso) under that rule (plus optional excludeBookingId).
+ */
+function loadBookingIntervalsOverlapping(
+  rangeStartIso: string,
+  rangeEndIso: string,
+  bufferMinutes: number,
+  excludeBookingId?: number
+): BookingIntervalRow[] {
+  const expandedStart = parseIso(rangeStartIso).minus({ minutes: bufferMinutes }).toUTC().toISO()!;
+  const rangeEnd = parseIso(rangeEndIso).toUTC().toISO()!;
+
   if (excludeBookingId != null && Number.isFinite(excludeBookingId)) {
-    return db.prepare("SELECT id, start_time, end_time FROM bookings WHERE id != ?").all(excludeBookingId) as BookingIntervalRow[];
+    return db
+      .prepare(
+        `SELECT id, start_time, end_time FROM bookings
+         WHERE id != ? AND start_time < ? AND end_time > ?`
+      )
+      .all(excludeBookingId, rangeEnd, expandedStart) as BookingIntervalRow[];
   }
-  return db.prepare("SELECT id, start_time, end_time FROM bookings").all() as BookingIntervalRow[];
+  return db
+    .prepare(`SELECT id, start_time, end_time FROM bookings WHERE start_time < ? AND end_time > ?`)
+    .all(rangeEnd, expandedStart) as BookingIntervalRow[];
 }
 
 function bookingConflictsWithRows(
@@ -90,7 +110,7 @@ function bookingConflictsWithRows(
 
 export function bookingConflicts(startIso: string, endIso: string, excludeBookingId?: number): boolean {
   const bufferMin = getAvailabilityConfig().bufferMinutes;
-  const rows = loadBookingIntervals(excludeBookingId);
+  const rows = loadBookingIntervalsOverlapping(startIso, endIso, bufferMin, excludeBookingId);
   return bookingConflictsWithRows(startIso, endIso, rows, bufferMin);
 }
 
@@ -104,7 +124,8 @@ export function computeSlots(fromIso: string, toIso: string, excludeBookingId?: 
     .map((b) => ({ s: parseHm(b.start), e: parseHm(b.end) }))
     .filter((b) => b.e > b.s);
 
-  const bookingRows = loadBookingIntervals(excludeBookingId);
+  const bufferMin = cfg.bufferMinutes;
+  const bookingRows = loadBookingIntervalsOverlapping(fromIso, toIso, bufferMin, excludeBookingId);
 
   const from = parseIso(fromIso);
   const to = parseIso(toIso);
@@ -132,7 +153,7 @@ export function computeSlots(fromIso: string, toIso: string, excludeBookingId?: 
           const eIso = endUtc.toISO()!;
 
           if (endUtc > from && startUtc < to) {
-            const available = !bookingConflictsWithRows(sIso, eIso, bookingRows, 0);
+            const available = !bookingConflictsWithRows(sIso, eIso, bookingRows, bufferMin);
             slots.push({ start: sIso, end: eIso, available });
           }
           m += slotMin;

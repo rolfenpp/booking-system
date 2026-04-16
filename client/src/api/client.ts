@@ -26,11 +26,11 @@ export type Booking = {
   id: number;
   name: string;
   email: string;
-  start_time: string;
-  end_time: string;
+  startTime: string;
+  endTime: string;
   notes: string;
-  service_id: number | null;
-  service_name: string | null;
+  serviceId: number | null;
+  serviceName: string | null;
 };
 
 export async function getAvailability(): Promise<Availability> {
@@ -38,16 +38,8 @@ export async function getAvailability(): Promise<Availability> {
   return data;
 }
 
-export async function getSettings(): Promise<Availability> {
-  return getAvailability();
-}
-
 export async function updateAvailability(body: AvailabilityWrite): Promise<void> {
   await api.put("/api/availability", body);
-}
-
-export async function updateSettings(body: AvailabilityWrite): Promise<void> {
-  return updateAvailability(body);
 }
 
 export async function getServices(): Promise<Service[]> {
@@ -98,13 +90,13 @@ export async function getBookings(q: {
 export async function createBooking(body: {
   name: string;
   email: string;
-  start_time: string;
-  end_time: string;
+  startTime: string;
+  endTime: string;
   notes?: string;
-  service_id?: number | null;
+  serviceId?: number | null;
 }): Promise<{ id: number }> {
-  const { data } = await api.post<{ id: number }>("/api/bookings", body);
-  return data;
+  const { data } = await api.post<{ id: number; booking: Booking }>("/api/bookings", body);
+  return { id: data.id };
 }
 
 export async function updateBooking(
@@ -112,10 +104,10 @@ export async function updateBooking(
   body: {
     name: string;
     email: string;
-    start_time: string;
-    end_time: string;
+    startTime: string;
+    endTime: string;
     notes?: string;
-    service_id?: number | null;
+    serviceId?: number | null;
   }
 ): Promise<void> {
   await api.put(`/api/bookings/${id}`, body);

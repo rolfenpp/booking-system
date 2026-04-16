@@ -1,9 +1,13 @@
-import express from "express";
 import cors from "cors";
+import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import "./db.js";
-import { registerRoutes } from "./routes.js";
+import { initDb } from "./db.js";
+import { errorHandler } from "./middleware/errorHandler.js";
+import { HttpError } from "./middleware/httpError.js";
+import { registerRoutes } from "./routes/registerRoutes.js";
+
+initDb();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -20,13 +24,15 @@ app.use(express.static(clientDist));
 
 app.get("*", (req, res, next) => {
   if (req.path.startsWith("/api")) {
-    res.status(404).json({ error: "Not found" });
+    next(new HttpError(404, "Not found"));
     return;
   }
   res.sendFile(path.join(clientDist, "index.html"), (err) => {
     if (err) next(err);
   });
 });
+
+app.use(errorHandler);
 
 app.listen(port, () => {
   console.log(`Server http://localhost:${port}`);

@@ -1,20 +1,40 @@
-import type { EventInput } from "@fullcalendar/core";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
+  Alert,
+  Box,
+  Button,
+  Checkbox,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  FormControl,
+  FormControlLabel,
+  InputLabel,
+  List,
+  ListItemButton,
+  ListItemText,
+  MenuItem,
+  Paper,
+  Select,
+  Snackbar,
+  Stack,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  TextField,
+  Typography,
+} from "@mui/material";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import { DateTime } from "luxon";
 import { useEffect, useMemo, useState } from "react";
-import { useForm } from "react-hook-form";
-import {
-  deleteBooking,
-  deleteService,
-  createService,
-  updateAvailability,
-  updateBooking,
-  updateService,
-  type Availability,
-  type Booking,
-  type Service,
-  type Slot,
-} from "../api/client";
+import { Controller, useForm } from "react-hook-form";
+import type { Booking, Service } from "../api/client";
 import {
   useAdminBookingsListQuery,
   useAdminScheduleQuery,
@@ -22,113 +42,21 @@ import {
   useEditDaySlotsQuery,
   useServicesQuery,
 } from "../api/hooks";
-import {
-  invalidateAfterAvailabilityWrite,
-  invalidateAfterBookingWrite,
-  invalidateAfterServiceWrite,
-} from "../api/queryInvalidation";
+import { PageCard } from "../components/layout/PageCard";
 import { APP_TIMEZONE } from "../constants/timezone";
-import { ScheduleCalendar } from "../components/ScheduleCalendar";
 import { useLocale } from "../context/LocaleContext";
-import { goToToday, navigateAnchor, type ViewMode } from "../lib/dateRange";
+import { buildMergedCalendarEvents, timeToMin } from "../lib/adminCalendar";
+import { formatCalendarTitle } from "../lib/calendarTitle";
+import { type ViewMode } from "../lib/dateRange";
 import { TIME_24 } from "../lib/timeDisplay";
+import { AdminBookingsPanel } from "./admin/AdminBookingsPanel";
+import type { AvailabilityFormValues } from "./admin/availabilityFormModel";
+import { availabilityToForm, formToAvailabilityPayload } from "./admin/availabilityFormModel";
+import type { BookingsSub, CalView } from "./admin/adminStorage";
+import { loadSavedBookingsSub, loadSavedCalView, persistBookingsSub, persistCalView } from "./admin/adminStorage";
+import { useAdminMutations } from "./admin/useAdminMutations";
 
 type Section = "bookings" | "services" | "availability" | "settings";
-type BookingsSub = "list" | "calendar";
-type CalView = "week" | "day";
-
-const LS_ADMIN_BOOKINGS_TAB = "booking-admin-default-bookings-sub";
-const LS_ADMIN_CAL_VIEW = "booking-admin-default-cal-view";
-
-function loadSavedBookingsSub(): BookingsSub {
-  try {
-    const v = localStorage.getItem(LS_ADMIN_BOOKINGS_TAB);
-    if (v === "list" || v === "calendar") return v;
-  } catch {}
-  return "list";
-}
-
-function loadSavedCalView(): CalView {
-  try {
-    const v = localStorage.getItem(LS_ADMIN_CAL_VIEW);
-    if (v === "week" || v === "day") return v;
-  } catch {}
-  return "week";
-}
-
-function timeToMin(s: string): number {
-  const [h, mm] = s.split(":").map(Number);
-  return (h ?? 0) * 60 + (mm ?? 0);
-}
-
-function buildMergedCalendarEvents(
-  slots: Slot[],
-  bookings: Booking[],
-  slotLabels: { available: string; booked: string }
-): EventInput[] {
-  const bookingStartMs = new Set(bookings.map((b) => Date.parse(b.start_time)).filter((n) => !Number.isNaN(n)));
-  const ev: EventInput[] = [];
-  for (const b of bookings) {
-    ev.push({
-      id: `booking-${b.id}`,
-      title: b.service_name ? `${b.name} · ${b.service_name}` : b.name,
-      start: b.start_time,
-      end: b.end_time,
-      display: "block",
-      extendedProps: { available: false, booking: b },
-      classNames: ["fc-booking-detail"],
-    });
-  }
-  for (const s of slots) {
-    const slotStartMs = Date.parse(s.start);
-    if (!Number.isNaN(slotStartMs) && bookingStartMs.has(slotStartMs)) continue;
-    ev.push({
-      id: s.start,
-      title: s.available ? slotLabels.available : slotLabels.booked,
-      start: s.start,
-      end: s.end,
-      display: "block",
-      extendedProps: { available: s.available },
-      classNames: s.available ? ["fc-slot-free"] : ["fc-slot-busy"],
-    });
-  }
-  return ev;
-}
-
-type AvailabilityFormValues = {
-  slotDurationMinutes: number;
-  bufferMinutes: number;
-  notificationsEnabled: boolean;
-  dayStart: string;
-  dayEnd: string;
-  workingDays: boolean[];
-  breaks: { start: string; end: string }[];
-};
-
-function availabilityToForm(a: Availability): AvailabilityFormValues {
-  return {
-    slotDurationMinutes: a.slotDurationMinutes,
-    bufferMinutes: a.bufferMinutes,
-    notificationsEnabled: a.notificationsEnabled,
-    dayStart: a.dayStart,
-    dayEnd: a.dayEnd,
-    workingDays: [...a.workingDays],
-    breaks: a.breaks.length ? a.breaks.map((b) => ({ ...b })) : [],
-  };
-}
-
-function formToAvailabilityPayload(data: AvailabilityFormValues) {
-  const slotDurationMinutes = data.slotDurationMinutes === 120 ? 120 : 60;
-  return {
-    workingDays: data.workingDays,
-    dayStart: data.dayStart,
-    dayEnd: data.dayEnd,
-    breaks: data.breaks.filter((b) => b.start && b.end),
-    slotDurationMinutes,
-    bufferMinutes: data.bufferMinutes,
-    notificationsEnabled: data.notificationsEnabled,
-  };
-}
 
 type EditBookingFormValues = {
   name: string;
@@ -143,9 +71,23 @@ type ServiceFormValues = {
   price: string;
 };
 
+const SECTIONS = [
+  ["bookings", "adminNavBookings"],
+  ["services", "adminNavServices"],
+  ["availability", "adminNavAvailability"],
+  ["settings", "adminNavSettings"],
+] as const;
+
 export function AdminPage() {
   const { locale, t } = useLocale();
-  const queryClient = useQueryClient();
+  const {
+    updateAvailabilityMut,
+    deleteBookingMut,
+    updateBookingMut,
+    createServiceMut,
+    updateServiceMut,
+    deleteServiceMut,
+  } = useAdminMutations();
   const [section, setSection] = useState<Section>("bookings");
   const [bookingsSub, setBookingsSub] = useState<BookingsSub>(loadSavedBookingsSub);
   const [calView, setCalView] = useState<CalView>(loadSavedCalView);
@@ -179,6 +121,7 @@ export function AdminPage() {
 
   const {
     register: registerAvail,
+    control: availControl,
     handleSubmit: handleSubmitAvail,
     reset: resetAvail,
     watch: watchAvail,
@@ -195,6 +138,7 @@ export function AdminPage() {
 
   const {
     register: registerEdit,
+    control: editControl,
     handleSubmit: handleSubmitEdit,
     reset: resetEdit,
     setError: setEditError,
@@ -243,48 +187,6 @@ export function AdminPage() {
     section === "bookings" &&
     (bookingsSub === "calendar" ? scheduleQuery.isPending : listQuery.isPending);
 
-  const updateAvailabilityMut = useMutation({
-    mutationFn: updateAvailability,
-    onSuccess: async () => {
-      await invalidateAfterAvailabilityWrite(queryClient);
-    },
-  });
-
-  const deleteBookingMut = useMutation({
-    mutationFn: deleteBooking,
-    onSuccess: async () => {
-      await invalidateAfterBookingWrite(queryClient);
-    },
-  });
-
-  const updateBookingMut = useMutation({
-    mutationFn: (args: { id: number; body: Parameters<typeof updateBooking>[1] }) => updateBooking(args.id, args.body),
-    onSuccess: async () => {
-      await invalidateAfterBookingWrite(queryClient);
-    },
-  });
-
-  const createServiceMut = useMutation({
-    mutationFn: createService,
-    onSuccess: async () => {
-      await invalidateAfterServiceWrite(queryClient);
-    },
-  });
-
-  const updateServiceMut = useMutation({
-    mutationFn: (args: { id: number; body: Parameters<typeof updateService>[1] }) => updateService(args.id, args.body),
-    onSuccess: async () => {
-      await invalidateAfterServiceWrite(queryClient);
-    },
-  });
-
-  const deleteServiceMut = useMutation({
-    mutationFn: deleteService,
-    onSuccess: async () => {
-      await invalidateAfterServiceWrite(queryClient);
-    },
-  });
-
   useEffect(() => {
     if (availabilityQuery.isError) setError(t("errorLoadAvail"));
   }, [availabilityQuery.isError, t]);
@@ -309,15 +211,11 @@ export function AdminPage() {
   }, [section]);
 
   useEffect(() => {
-    try {
-      localStorage.setItem(LS_ADMIN_BOOKINGS_TAB, bookingsSub);
-    } catch {}
+    persistBookingsSub(bookingsSub);
   }, [bookingsSub]);
 
   useEffect(() => {
-    try {
-      localStorage.setItem(LS_ADMIN_CAL_VIEW, calView);
-    } catch {}
+    persistCalView(calView);
   }, [calView]);
 
   useEffect(() => {
@@ -330,35 +228,29 @@ export function AdminPage() {
         name: edit.name,
         email: edit.email,
         notes: edit.notes,
-        service_id: edit.service_id != null ? String(edit.service_id) : "",
+        service_id: edit.serviceId != null ? String(edit.serviceId) : "",
       });
-      const d = DateTime.fromISO(edit.start_time).setZone(APP_TIMEZONE).toFormat("yyyy-LL-dd");
+      const d = DateTime.fromISO(edit.startTime).setZone(APP_TIMEZONE).toFormat("yyyy-LL-dd");
       setPickDate(d);
-      setSlotValue(edit.start_time);
+      setSlotValue(edit.startTime);
     }
   }, [edit, availability, resetEdit]);
 
   const slotChoices = useMemo(() => {
     if (!edit) return [];
-    return slotOptions.filter((s) => s.available || s.start === edit.start_time);
+    return slotOptions.filter((s) => s.available || s.start === edit.startTime);
   }, [slotOptions, edit]);
 
   useEffect(() => {
     if (!edit || slotChoices.length === 0) return;
     if (!slotChoices.some((s) => s.start === slotValue)) {
       const preferred =
-        slotChoices.find((s) => s.start === edit.start_time) ??
+        slotChoices.find((s) => s.start === edit.startTime) ??
         slotChoices.find((s) => s.available) ??
         slotChoices[0];
       if (preferred) setSlotValue(preferred.start);
     }
   }, [slotChoices, edit, slotValue]);
-
-  useEffect(() => {
-    if (!toast) return;
-    const tid = window.setTimeout(() => setToast(null), 3200);
-    return () => window.clearTimeout(tid);
-  }, [toast]);
 
   useEffect(() => {
     if (!serviceModal) return;
@@ -403,14 +295,15 @@ export function AdminPage() {
     [t]
   );
 
-  const calTitle = useMemo(() => {
-    const loc = locale === "sv" ? "sv" : "en";
-    const dt = DateTime.fromJSDate(anchor, { zone: APP_TIMEZONE }).setLocale(loc);
-    if (calView === "day") return dt.toFormat("cccc, LLL d, yyyy");
-    const a = dt.startOf("week");
-    const b = dt.endOf("week");
-    return `${a.toFormat("LLL d")} – ${b.toFormat("LLL d, yyyy")}`;
-  }, [anchor, calView, locale]);
+  const calTitle = useMemo(() => formatCalendarTitle(anchor, calView, locale), [anchor, calView, locale]);
+
+  const adminCalViewTabs = useMemo(
+    () => [
+      { id: "week", label: t("adminWeek") },
+      { id: "day", label: t("adminDay") },
+    ],
+    [t]
+  );
 
   async function onSaveAvailability(data: AvailabilityFormValues) {
     clearAvailErrors("root");
@@ -474,7 +367,7 @@ export function AdminPage() {
       setEditError("root", { type: "validate", message: t("valPickSlot") });
       return;
     }
-    const allowed = slot.available || slot.start === edit.start_time;
+    const allowed = slot.available || slot.start === edit.startTime;
     if (!allowed) {
       setEditError("root", { type: "validate", message: t("valSlotUnavailable") });
       return;
@@ -485,10 +378,10 @@ export function AdminPage() {
         body: {
           name: data.name.trim(),
           email: data.email.trim(),
-          start_time: slot.start,
-          end_time: slot.end,
+          startTime: slot.start,
+          endTime: slot.end,
           notes: data.notes.trim(),
-          service_id: data.service_id === "" ? null : Number(data.service_id),
+          serviceId: data.service_id === "" ? null : Number(data.service_id),
         },
       });
       setEdit(null);
@@ -539,582 +432,496 @@ export function AdminPage() {
   }
 
   return (
-    <div className="admin-layout">
-      <aside className="admin-sidebar card">
-        <p className="admin-sidebar__label">{t("adminLabel")}</p>
-        <nav className="admin-sidebar__nav" aria-label={t("adminAriaSections")}>
-          {(
-            [
-              ["bookings", "adminNavBookings"],
-              ["services", "adminNavServices"],
-              ["availability", "adminNavAvailability"],
-              ["settings", "adminNavSettings"],
-            ] as const
-          ).map(([id, labelKey]) => (
-            <button
-              key={id}
-              type="button"
-              className={section === id ? "is-active" : ""}
-              onClick={() => setSection(id)}
-            >
-              {t(labelKey)}
-            </button>
+    <Stack direction={{ xs: "column", md: "row" }} spacing={2} sx={{ alignItems: "flex-start" }}>
+      <Paper variant="outlined" sx={{ p: 1, width: { xs: "100%", md: 220 }, flexShrink: 0 }}>
+        <Typography variant="overline" color="text.secondary" sx={{ px: 1, display: "block" }}>
+          {t("adminLabel")}
+        </Typography>
+        <List dense component="nav" aria-label={t("adminAriaSections")} disablePadding>
+          {SECTIONS.map(([id, labelKey]) => (
+            <ListItemButton key={id} selected={section === id} onClick={() => setSection(id)}>
+              <ListItemText primary={t(labelKey)} slotProps={{ primary: { variant: "body2" } }} />
+            </ListItemButton>
           ))}
-        </nav>
-      </aside>
+        </List>
+      </Paper>
 
-      <div className="admin-main">
-        {error && <p className="error-text">{error}</p>}
+      <Box sx={{ flex: 1, minWidth: 0, width: "100%" }}>
+        {error && (
+          <Alert severity="error" sx={{ mb: 2 }}>
+            {error}
+          </Alert>
+        )}
 
         {section === "bookings" && (
-          <div className="card">
-            <h1 className="card-title">{t("adminBookingsTitle")}</h1>
-            <p className="card-sub">{t("adminBookingsSub")}</p>
-
-            <div className="admin-toolbar">
-              <div className="segmented" role="tablist">
-                <button type="button" className={bookingsSub === "list" ? "is-active" : ""} onClick={() => setBookingsSub("list")}>
-                  {t("adminList")}
-                </button>
-                <button
-                  type="button"
-                  className={bookingsSub === "calendar" ? "is-active" : ""}
-                  onClick={() => setBookingsSub("calendar")}
-                >
-                  {t("adminCalendar")}
-                </button>
-              </div>
-            </div>
-
-            {bookingsSub === "list" && (
-              <div style={{ marginTop: "1rem" }}>
-                <div
-                  style={{
-                    display: "flex",
-                    flexWrap: "wrap",
-                    gap: "0.75rem",
-                    alignItems: "flex-end",
-                    marginBottom: "0.75rem",
-                  }}
-                >
-                  <div className="field" style={{ marginBottom: 0, minWidth: "160px" }}>
-                    <label htmlFor="adm-filter-date">{t("adminDate")}</label>
-                    <input id="adm-filter-date" type="date" value={filterDate} onChange={(e) => setFilterDate(e.target.value)} />
-                  </div>
-                  <div className="field" style={{ marginBottom: 0, minWidth: "180px" }}>
-                    <label htmlFor="adm-filter-svc">{t("adminService")}</label>
-                    <select
-                      id="adm-filter-svc"
-                      value={filterService === "" ? "" : String(filterService)}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        setFilterService(v === "" ? "" : Number(v));
-                      }}
-                    >
-                      <option value="">{t("adminAllServices")}</option>
-                      {services.map((s) => (
-                        <option key={s.id} value={s.id}>
-                          {s.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-                {bookingsLoading && <p className="muted">{t("adminLoading")}</p>}
-                {!bookingsLoading && (
-                  <div className="table-wrap">
-                    <table className="data-table">
-                      <thead>
-                        <tr>
-                          <th>{t("adminThDate")}</th>
-                          <th>{t("adminThTime")}</th>
-                          <th>{t("adminThCustomer")}</th>
-                          <th>{t("adminThService")}</th>
-                          <th />
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {listBookings.length === 0 && (
-                          <tr>
-                            <td colSpan={5} className="muted">
-                              {t("adminNoBookings")}
-                            </td>
-                          </tr>
-                        )}
-                        {listBookings.map((b) => (
-                          <tr key={b.id}>
-                            <td>
-                              {DateTime.fromISO(b.start_time)
-                                .setZone(APP_TIMEZONE)
-                                .setLocale(locale === "sv" ? "sv" : "en")
-                                .toFormat("ccc LLL d")}
-                            </td>
-                            <td>
-                              {DateTime.fromISO(b.start_time).setZone(APP_TIMEZONE).toFormat(TIME_24)} –{" "}
-                              {DateTime.fromISO(b.end_time).setZone(APP_TIMEZONE).toFormat(TIME_24)}
-                            </td>
-                            <td>{b.name}</td>
-                            <td>{b.service_name ?? "—"}</td>
-                            <td style={{ whiteSpace: "nowrap" }}>
-                              <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEdit(b)}>
-                                {t("adminEdit")}
-                              </button>{" "}
-                              <button type="button" className="btn btn-danger btn-sm" onClick={() => removeBooking(b.id)}>
-                                {t("adminDelete")}
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {bookingsSub === "calendar" && availability && (
-              <div style={{ marginTop: "1rem" }}>
-                <div className="cal-toolbar">
-                  <div className="cal-toolbar__views">
-                    <button type="button" className={calView === "week" ? "is-active" : ""} onClick={() => setCalView("week")}>
-                      {t("adminWeek")}
-                    </button>
-                    <button type="button" className={calView === "day" ? "is-active" : ""} onClick={() => setCalView("day")}>
-                      {t("adminDay")}
-                    </button>
-                  </div>
-                  <div className="cal-toolbar__nav">
-                    <button
-                      type="button"
-                      className="btn btn-ghost btn-sm"
-                      onClick={() => setAnchor((a) => navigateAnchor(viewAsFc, a, -1, APP_TIMEZONE))}
-                      aria-label={t("adminAriaPrev")}
-                    >
-                      ‹
-                    </button>
-                    <span className="cal-toolbar__title">{calTitle}</span>
-                    <button
-                      type="button"
-                      className="btn btn-ghost btn-sm"
-                      onClick={() => setAnchor((a) => navigateAnchor(viewAsFc, a, 1, APP_TIMEZONE))}
-                      aria-label={t("adminAriaNext")}
-                    >
-                      ›
-                    </button>
-                    <button type="button" className="btn btn-sm" onClick={() => setAnchor(goToToday(viewAsFc, APP_TIMEZONE))}>
-                      {t("adminToday")}
-                    </button>
-                  </div>
-                </div>
-                {bookingsLoading && <p className="muted">{t("adminLoading")}</p>}
-                {!bookingsLoading && (
-                  <ScheduleCalendar
-                    view={viewAsFc}
-                    anchor={anchor}
-                    slotDurationMinutes={availability.slotDurationMinutes}
-                    availabilityHours={{ dayStart: availability.dayStart, dayEnd: availability.dayEnd }}
-                    slots={[]}
-                    calendarEvents={calendarEvents}
-                    onBookingClick={(b) => setEdit(b)}
-                  />
-                )}
-                <p className="muted" style={{ marginTop: "0.75rem", fontSize: "0.82rem" }}>
-                  {t("adminCalLegend")}
-                </p>
-              </div>
-            )}
-          </div>
+          <AdminBookingsPanel
+            t={t}
+            locale={locale}
+            bookingsSub={bookingsSub}
+            setBookingsSub={setBookingsSub}
+            calView={calView}
+            setCalView={setCalView}
+            adminCalViewTabs={adminCalViewTabs}
+            calTitle={calTitle}
+            filterDate={filterDate}
+            setFilterDate={setFilterDate}
+            filterService={filterService}
+            setFilterService={setFilterService}
+            services={services}
+            listBookings={listBookings}
+            bookingsLoading={bookingsLoading}
+            setEdit={setEdit}
+            anchor={anchor}
+            setAnchor={setAnchor}
+            viewAsFc={viewAsFc}
+            calendarEvents={calendarEvents}
+            availability={
+              availability
+                ? {
+                    slotDurationMinutes: availability.slotDurationMinutes,
+                    dayStart: availability.dayStart,
+                    dayEnd: availability.dayEnd,
+                  }
+                : null
+            }
+            onDeleteBooking={removeBooking}
+          />
         )}
 
         {section === "services" && (
-          <div className="card">
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "1rem", flexWrap: "wrap" }}>
-              <div>
-                <h1 className="card-title">{t("adminServicesTitle")}</h1>
-                <p className="card-sub">{t("adminServicesSub")}</p>
-              </div>
-              <button type="button" className="btn" onClick={() => setServiceModal("new")}>
+          <PageCard title={t("adminServicesTitle")} subtitle={t("adminServicesSub")}>
+            <Box sx={{ display: "flex", justifyContent: "flex-end", mb: 1 }}>
+              <Button variant="contained" onClick={() => setServiceModal("new")}>
                 {t("adminAddService")}
-              </button>
-            </div>
-            <div className="table-wrap" style={{ marginTop: "1rem" }}>
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>{t("adminThName")}</th>
-                    <th>{t("adminThRefMin")}</th>
-                    <th>{t("adminThPrice")}</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
+              </Button>
+            </Box>
+            <TableContainer component={Paper} variant="outlined">
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>{t("adminThName")}</TableCell>
+                    <TableCell>{t("adminThRefMin")}</TableCell>
+                    <TableCell>{t("adminThPrice")}</TableCell>
+                    <TableCell align="right" />
+                  </TableRow>
+                </TableHead>
+                <TableBody>
                   {servicesQuery.isPending && (
-                    <tr>
-                      <td colSpan={4} className="muted">
-                        {t("adminLoading")}
-                      </td>
-                    </tr>
+                    <TableRow>
+                      <TableCell colSpan={4}>
+                        <Typography variant="body2" color="text.secondary">
+                          {t("adminLoading")}
+                        </Typography>
+                      </TableCell>
+                    </TableRow>
                   )}
                   {!servicesQuery.isPending && !servicesQuery.isError && services.length === 0 && (
-                    <tr>
-                      <td colSpan={4} className="muted">
-                        {t("adminNoServices")}
-                      </td>
-                    </tr>
+                    <TableRow>
+                      <TableCell colSpan={4}>
+                        <Typography variant="body2" color="text.secondary">
+                          {t("adminNoServices")}
+                        </Typography>
+                      </TableCell>
+                    </TableRow>
                   )}
                   {!servicesQuery.isPending &&
                     !servicesQuery.isError &&
                     services.map((s) => (
-                      <tr key={s.id}>
-                        <td>{s.name}</td>
-                        <td>
+                      <TableRow key={s.id}>
+                        <TableCell>{s.name}</TableCell>
+                        <TableCell>
                           {s.durationMinutes} {t("adminMinSuffix")}
-                        </td>
-                        <td>{s.price != null ? `$${s.price}` : "—"}</td>
-                        <td style={{ whiteSpace: "nowrap" }}>
-                          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setServiceModal(s)}>
+                        </TableCell>
+                        <TableCell>{s.price != null ? `$${s.price}` : "—"}</TableCell>
+                        <TableCell align="right" sx={{ whiteSpace: "nowrap" }}>
+                          <Button size="small" onClick={() => setServiceModal(s)}>
                             {t("adminEdit")}
-                          </button>{" "}
-                          <button type="button" className="btn btn-danger btn-sm" onClick={() => removeService(s)}>
+                          </Button>
+                          <Button size="small" color="error" onClick={() => removeService(s)}>
                             {t("adminDelete")}
-                          </button>
-                        </td>
-                      </tr>
+                          </Button>
+                        </TableCell>
+                      </TableRow>
                     ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
+                </TableBody>
+              </Table>
+            </TableContainer>
+          </PageCard>
         )}
 
         {section === "availability" && availability && (
-          <div className="card">
-            <h1 className="card-title">{t("adminAvailTitle")}</h1>
-            <p className="card-sub">{t("adminAvailSub")}</p>
-            <form onSubmit={handleSubmitAvail(onSaveAvailability)} noValidate>
-              <div style={{ display: "grid", gap: "0.75rem", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))" }}>
-                <div className="field">
-                  <label htmlFor="af-slot-dur">{t("adminApptLength")}</label>
-                  <select id="af-slot-dur" {...registerAvail("slotDurationMinutes", { valueAsNumber: true })}>
-                    <option value={60}>{t("adminSlotDuration60")}</option>
-                    <option value={120}>{t("adminSlotDuration120")}</option>
-                  </select>
-                  <p className="muted" style={{ fontSize: "0.78rem", marginTop: "0.25rem", marginBottom: 0 }}>
-                    {t("adminSlotDurationHint")}
-                  </p>
-                </div>
-                <div className="field">
-                  <label htmlFor="af-buffer">{t("adminBuffer")}</label>
-                  <input
-                    id="af-buffer"
-                    type="number"
-                    min={0}
-                    max={120}
-                    {...registerAvail("bufferMinutes", { valueAsNumber: true, min: 0, max: 120 })}
+          <PageCard title={t("adminAvailTitle")} subtitle={t("adminAvailSub")}>
+            <Box component="form" onSubmit={handleSubmitAvail(onSaveAvailability)} noValidate>
+              <Stack spacing={2}>
+                <Stack direction={{ xs: "column", sm: "row" }} spacing={2} useFlexGap sx={{ flexWrap: "wrap" }}>
+                  <Controller
+                    name="slotDurationMinutes"
+                    control={availControl}
+                    render={({ field }) => (
+                      <FormControl fullWidth sx={{ maxWidth: 280 }}>
+                        <InputLabel id="af-slot-dur">{t("adminApptLength")}</InputLabel>
+                        <Select
+                          labelId="af-slot-dur"
+                          label={t("adminApptLength")}
+                          value={field.value}
+                          onChange={(e) => field.onChange(Number(e.target.value))}
+                        >
+                          <MenuItem value={60}>{t("adminSlotDuration60")}</MenuItem>
+                          <MenuItem value={120}>{t("adminSlotDuration120")}</MenuItem>
+                        </Select>
+                        <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5 }}>
+                          {t("adminSlotDurationHint")}
+                        </Typography>
+                      </FormControl>
+                    )}
                   />
-                  <p className="muted" style={{ fontSize: "0.78rem", marginTop: "0.25rem", marginBottom: 0 }}>
-                    {t("adminBufferHint")}
-                  </p>
-                </div>
-                <div className="field">
-                  <p style={{ margin: 0, fontSize: "0.88rem", color: "var(--muted)" }}>{t("adminScheduleTimezoneFixed")}</p>
-                </div>
-              </div>
+                  <TextField
+                    label={t("adminBuffer")}
+                    type="number"
+                    size="small"
+                    slotProps={{ htmlInput: { min: 0, max: 120 } }}
+                    {...registerAvail("bufferMinutes", { valueAsNumber: true, min: 0, max: 120 })}
+                    sx={{ maxWidth: 200 }}
+                    helperText={t("adminBufferHint")}
+                  />
+                  <Typography variant="body2" color="text.secondary" sx={{ alignSelf: "center" }}>
+                    {t("adminScheduleTimezoneFixed")}
+                  </Typography>
+                </Stack>
 
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", marginTop: "0.75rem" }}>
-                <div className="field" style={{ marginBottom: 0, minWidth: "120px" }}>
-                  <label htmlFor="af-day-start">{t("adminDayStarts")}</label>
-                  <input id="af-day-start" type="time" step={3600} {...registerAvail("dayStart")} />
-                </div>
-                <div className="field" style={{ marginBottom: 0, minWidth: "120px" }}>
-                  <label htmlFor="af-day-end">{t("adminDayEnds")}</label>
-                  <input id="af-day-end" type="time" step={3600} {...registerAvail("dayEnd")} />
-                </div>
-              </div>
+                <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
+                  <TextField
+                    label={t("adminDayStarts")}
+                    type="time"
+                    size="small"
+                    slotProps={{ inputLabel: { shrink: true }, htmlInput: { step: 3600 } }}
+                    {...registerAvail("dayStart")}
+                  />
+                  <TextField
+                    label={t("adminDayEnds")}
+                    type="time"
+                    size="small"
+                    slotProps={{ inputLabel: { shrink: true }, htmlInput: { step: 3600 } }}
+                    {...registerAvail("dayEnd")}
+                  />
+                </Stack>
 
-              <div style={{ marginTop: "0.85rem" }}>
-                <p className="field" style={{ marginBottom: "0.35rem", fontSize: "0.8rem", fontWeight: 600, color: "var(--muted)" }}>
-                  {t("adminWorkingDays")}
-                </p>
-                <div className="admin-weekdays">
-                  {weekdayLabels.map((label, i) => (
-                    <label key={label} className="admin-weekdays__item">
-                      <input type="checkbox" {...registerAvail(`workingDays.${i}` as const)} />
-                      <span>{label}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
+                <Box>
+                  <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                    {t("adminWorkingDays")}
+                  </Typography>
+                  <Stack direction="row" useFlexGap spacing={1} sx={{ flexWrap: "wrap" }}>
+                    {weekdayLabels.map((label, i) => (
+                      <FormControlLabel key={label} control={<Checkbox {...registerAvail(`workingDays.${i}` as const)} />} label={label} />
+                    ))}
+                  </Stack>
+                </Box>
 
-              <details className="admin-details" style={{ marginTop: "1rem" }}>
-                <summary>{t("adminBreaksSummary")}</summary>
-                <p className="muted" style={{ marginTop: "0.5rem" }}>
-                  {t("adminBreaksHint")}
-                </p>
-                {watchAvail("breaks").map((_, i) => (
-                  <div key={i} style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginTop: "0.5rem", flexWrap: "wrap" }}>
-                    <input
-                      type="time"
-                      step={3600}
-                      {...registerAvail(`breaks.${i}.start` as const)}
-                      aria-label={`Break ${i + 1} start`}
-                    />
-                    <span className="muted">{t("adminBreakTo")}</span>
-                    <input type="time" step={3600} {...registerAvail(`breaks.${i}.end` as const)} aria-label={`Break ${i + 1} end`} />
-                    <button
-                      type="button"
-                      className="btn btn-ghost btn-sm"
-                      onClick={() => {
-                        const cur = getAvailValues("breaks");
-                        setAvailValue(
-                          "breaks",
-                          cur.filter((__, j) => j !== i)
-                        );
-                      }}
-                    >
-                      {t("adminRemove")}
-                    </button>
-                  </div>
-                ))}
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-sm"
-                  style={{ marginTop: "0.65rem" }}
-                  onClick={() => {
-                    const cur = getAvailValues("breaks");
-                    setAvailValue("breaks", [...cur, { start: "12:00", end: "13:00" }]);
-                  }}
-                >
-                  {t("adminAddBreak")}
-                </button>
-              </details>
+                <Accordion defaultExpanded={false} variant="outlined">
+                  <AccordionSummary expandIcon={<ExpandMoreIcon />}>{t("adminBreaksSummary")}</AccordionSummary>
+                  <AccordionDetails>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                      {t("adminBreaksHint")}
+                    </Typography>
+                    <Stack spacing={1}>
+                      {watchAvail("breaks").map((_, i) => (
+                        <Stack key={i} direction="row" spacing={1} useFlexGap sx={{ alignItems: "center", flexWrap: "wrap" }}>
+                          <TextField
+                            type="time"
+                            size="small"
+                            slotProps={{ inputLabel: { shrink: true }, htmlInput: { step: 3600 } }}
+                            {...registerAvail(`breaks.${i}.start` as const)}
+                            aria-label={`Break ${i + 1} start`}
+                          />
+                          <Typography variant="body2" color="text.secondary">
+                            {t("adminBreakTo")}
+                          </Typography>
+                          <TextField
+                            type="time"
+                            size="small"
+                            slotProps={{ inputLabel: { shrink: true }, htmlInput: { step: 3600 } }}
+                            {...registerAvail(`breaks.${i}.end` as const)}
+                            aria-label={`Break ${i + 1} end`}
+                          />
+                          <Button
+                            size="small"
+                            onClick={() => {
+                              const cur = getAvailValues("breaks");
+                              setAvailValue(
+                                "breaks",
+                                cur.filter((__, j) => j !== i)
+                              );
+                            }}
+                          >
+                            {t("adminRemove")}
+                          </Button>
+                        </Stack>
+                      ))}
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        onClick={() => {
+                          const cur = getAvailValues("breaks");
+                          setAvailValue("breaks", [...cur, { start: "12:00", end: "13:00" }]);
+                        }}
+                      >
+                        {t("adminAddBreak")}
+                      </Button>
+                    </Stack>
+                  </AccordionDetails>
+                </Accordion>
 
-              {availErrors.root && (
-                <p className="error-text" role="alert">
-                  {availErrors.root.message}
-                </p>
-              )}
+                {availErrors.root && (
+                  <Alert severity="error" role="alert">
+                    {availErrors.root.message}
+                  </Alert>
+                )}
 
-              <button className="btn" type="submit" disabled={isSavingAvailability} style={{ marginTop: "0.85rem" }}>
-                {isSavingAvailability ? t("adminSaving") : t("adminSaveAvail")}
-              </button>
-            </form>
-          </div>
+                <Button type="submit" variant="contained" disabled={isSavingAvailability} sx={{ alignSelf: "flex-start" }}>
+                  {isSavingAvailability ? t("adminSaving") : t("adminSaveAvail")}
+                </Button>
+              </Stack>
+            </Box>
+          </PageCard>
         )}
 
         {section === "settings" && availability && (
-          <div className="card">
-            <h1 className="card-title">{t("adminSettingsTitle")}</h1>
-            <p className="card-sub">{t("adminSettingsSub")}</p>
-
-            <div className="admin-settings">
-              <section className="admin-settings__block" aria-labelledby="settings-schedule-ro">
-                <h2 id="settings-schedule-ro" className="admin-settings__title">
+          <PageCard title={t("adminSettingsTitle")} subtitle={t("adminSettingsSub")}>
+            <Stack spacing={3} sx={{ maxWidth: 480 }}>
+              <Box component="section" aria-labelledby="settings-schedule-ro">
+                <Typography id="settings-schedule-ro" variant="subtitle1" gutterBottom sx={{ fontWeight: 600 }}>
                   {t("adminScheduleSummary")}
-                </h2>
-                <dl className="admin-settings__dl">
-                  <dt>{t("adminStTimezone")}</dt>
-                  <dd>{APP_TIMEZONE}</dd>
-                  <dt>{t("adminStSlotLength")}</dt>
-                  <dd>
-                    {availability.slotDurationMinutes} {t("adminMinutesWord")}
-                  </dd>
-                  <dt>{t("adminStBuffer")}</dt>
-                  <dd>
-                    {availability.bufferMinutes} {t("adminStBufferSuffix")}
-                  </dd>
-                </dl>
-                <p className="muted admin-settings__hint" style={{ marginTop: "0.65rem" }}>
+                </Typography>
+                <Stack spacing={0.5} sx={{ pl: 0 }}>
+                  <Typography variant="body2">
+                    <strong>{t("adminStTimezone")}:</strong> {APP_TIMEZONE}
+                  </Typography>
+                  <Typography variant="body2">
+                    <strong>{t("adminStSlotLength")}:</strong> {availability.slotDurationMinutes} {t("adminMinutesWord")}
+                  </Typography>
+                  <Typography variant="body2">
+                    <strong>{t("adminStBuffer")}:</strong> {availability.bufferMinutes} {t("adminStBufferSuffix")}
+                  </Typography>
+                </Stack>
+                <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: "block" }}>
                   {t("adminStHint")}
-                </p>
-              </section>
+                </Typography>
+              </Box>
 
-              <section className="admin-settings__block" aria-labelledby="settings-bookings-ui">
-                <h2 id="settings-bookings-ui" className="admin-settings__title">
+              <Box component="section" aria-labelledby="settings-bookings-ui">
+                <Typography id="settings-bookings-ui" variant="subtitle1" gutterBottom sx={{ fontWeight: 600 }}>
                   {t("adminWorkspace")}
-                </h2>
-                <p className="muted admin-settings__hint" style={{ marginTop: 0, marginBottom: "0.75rem" }}>
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
                   {t("adminWorkspaceHint")}
-                </p>
-                <div className="field">
-                  <label htmlFor="settings-default-bookings-tab">{t("adminOpenWith")}</label>
-                  <select
-                    id="settings-default-bookings-tab"
+                </Typography>
+                <FormControl fullWidth size="small" sx={{ mb: 2 }}>
+                  <InputLabel id="settings-default-bookings-tab">{t("adminOpenWith")}</InputLabel>
+                  <Select
+                    labelId="settings-default-bookings-tab"
+                    label={t("adminOpenWith")}
                     value={bookingsSub}
                     onChange={(e) => setBookingsSub(e.target.value as BookingsSub)}
                   >
-                    <option value="list">{t("adminList")}</option>
-                    <option value="calendar">{t("adminCalendar")}</option>
-                  </select>
-                </div>
-                <div className="field">
-                  <label htmlFor="settings-default-cal-view">{t("adminCalZoom")}</label>
-                  <select
-                    id="settings-default-cal-view"
+                    <MenuItem value="list">{t("adminList")}</MenuItem>
+                    <MenuItem value="calendar">{t("adminCalendar")}</MenuItem>
+                  </Select>
+                </FormControl>
+                <FormControl fullWidth size="small">
+                  <InputLabel id="settings-default-cal-view">{t("adminCalZoom")}</InputLabel>
+                  <Select
+                    labelId="settings-default-cal-view"
+                    label={t("adminCalZoom")}
                     value={calView}
                     onChange={(e) => setCalView(e.target.value as CalView)}
                   >
-                    <option value="week">{t("adminWeek")}</option>
-                    <option value="day">{t("adminDay")}</option>
-                  </select>
-                  <p className="muted admin-settings__hint" style={{ marginTop: "0.35rem" }}>
+                    <MenuItem value="week">{t("adminWeek")}</MenuItem>
+                    <MenuItem value="day">{t("adminDay")}</MenuItem>
+                  </Select>
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: "block" }}>
                     {t("adminCalZoomHint")}
-                  </p>
-                </div>
-              </section>
+                  </Typography>
+                </FormControl>
+              </Box>
 
-              <section className="admin-settings__block" aria-labelledby="settings-notifications">
-                <h2 id="settings-notifications" className="admin-settings__title">
+              <Box component="section" aria-labelledby="settings-notifications">
+                <Typography id="settings-notifications" variant="subtitle1" gutterBottom sx={{ fontWeight: 600 }}>
                   {t("adminNotifications")}
-                </h2>
-                <div className="admin-settings__row">
-                  <input
-                    id="notif-toggle"
-                    type="checkbox"
-                    checked={availability.notificationsEnabled}
-                    onChange={(e) => onSaveNotifications(e.target.checked)}
-                    aria-describedby="notif-toggle-desc"
-                  />
-                  <div className="admin-settings__row-text">
-                    <label htmlFor="notif-toggle">{t("adminMockEmail")}</label>
-                    <p id="notif-toggle-desc" className="muted admin-settings__hint">
-                      {t("adminMockEmailDesc")}
-                    </p>
-                  </div>
-                </div>
-              </section>
-            </div>
-          </div>
+                </Typography>
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      checked={availability.notificationsEnabled}
+                      onChange={(e) => onSaveNotifications(e.target.checked)}
+                      slotProps={{ input: { "aria-describedby": "notif-toggle-desc" } }}
+                    />
+                  }
+                  label={t("adminMockEmail")}
+                />
+                <Typography id="notif-toggle-desc" variant="caption" color="text.secondary" sx={{ display: "block" }}>
+                  {t("adminMockEmailDesc")}
+                </Typography>
+              </Box>
+            </Stack>
+          </PageCard>
         )}
 
-        {serviceModal && (
-          <div className="modal-backdrop" role="presentation" onMouseDown={(e) => e.target === e.currentTarget && setServiceModal(null)}>
-            <div className="modal" role="dialog" aria-modal="true" aria-labelledby="svc-modal-title">
-              <h2 id="svc-modal-title" className="modal__title">
-                {serviceModal === "new" ? t("modalAddService") : t("modalEditService")}
-              </h2>
-              <form onSubmit={handleSubmitSvc(onSaveService)} noValidate>
-                <div className="field">
-                  <label htmlFor="svc-name">{t("adminThName")}</label>
-                  <input id="svc-name" {...registerSvc("name", { required: true })} />
-                </div>
-                {svcErrors.root && (
-                  <p className="error-text" role="alert">
-                    {svcErrors.root.message}
-                  </p>
-                )}
-                <div className="field">
-                  <label htmlFor="svc-dur">{t("modalSvcDur")}</label>
-                  <input
-                    id="svc-dur"
-                    type="number"
-                    min={5}
-                    max={480}
-                    {...registerSvc("durationMinutes", { valueAsNumber: true, min: 5, max: 480 })}
-                  />
-                </div>
-                <div className="field">
-                  <label htmlFor="svc-price">{t("modalSvcPrice")}</label>
-                  <input id="svc-price" type="text" inputMode="decimal" placeholder={t("modalSvcPlaceholder")} {...registerSvc("price")} />
-                </div>
-                <div className="modal__actions">
-                  <button type="button" className="btn btn-ghost" onClick={() => setServiceModal(null)}>
-                    {t("bookingCancel")}
-                  </button>
-                  <button type="submit" className="btn" disabled={isSavingSvc}>
-                    {isSavingSvc ? t("bookingSaving") : t("modalSave")}
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        )}
+        <Dialog open={Boolean(serviceModal)} onClose={() => setServiceModal(null)} fullWidth maxWidth="sm">
+          <DialogTitle id="svc-modal-title">
+            {serviceModal === "new" ? t("modalAddService") : t("modalEditService")}
+          </DialogTitle>
+          <Box component="form" id="svc-form" onSubmit={handleSubmitSvc(onSaveService)} noValidate>
+            <DialogContent dividers>
+              <TextField
+                {...registerSvc("name", { required: true })}
+                label={t("adminThName")}
+                fullWidth
+                required
+                margin="normal"
+                autoFocus
+              />
+              {svcErrors.root && (
+                <Alert severity="error" role="alert" sx={{ mt: 1 }}>
+                  {svcErrors.root.message}
+                </Alert>
+              )}
+              <TextField
+                {...registerSvc("durationMinutes", { valueAsNumber: true, min: 5, max: 480 })}
+                label={t("modalSvcDur")}
+                type="number"
+                fullWidth
+                margin="normal"
+                slotProps={{ htmlInput: { min: 5, max: 480 } }}
+              />
+              <TextField
+                {...registerSvc("price")}
+                label={t("modalSvcPrice")}
+                placeholder={t("modalSvcPlaceholder")}
+                fullWidth
+                margin="normal"
+                inputMode="decimal"
+              />
+            </DialogContent>
+            <DialogActions sx={{ px: 3, py: 2 }}>
+              <Button onClick={() => setServiceModal(null)}>{t("bookingCancel")}</Button>
+              <Button type="submit" form="svc-form" variant="contained" disabled={isSavingSvc}>
+                {isSavingSvc ? t("bookingSaving") : t("modalSave")}
+              </Button>
+            </DialogActions>
+          </Box>
+        </Dialog>
 
-        {edit && availability && (
-          <div className="modal-backdrop" role="presentation" onMouseDown={(e) => e.target === e.currentTarget && setEdit(null)}>
-            <div className="modal modal--wide" role="dialog" aria-modal="true">
-              <h2 className="modal__title">Booking</h2>
-              <form onSubmit={handleSubmitEdit(onSaveEdit)} noValidate>
-                <div className="field">
-                  <label htmlFor="eb-name">Name</label>
-                  <input id="eb-name" {...registerEdit("name", { required: "Name is required" })} />
-                  {editErrors.name && <p className="error-text">{editErrors.name.message}</p>}
-                </div>
-                <div className="field">
-                  <label htmlFor="eb-email">Email</label>
-                  <input id="eb-email" type="email" {...registerEdit("email", { required: "Email is required" })} />
-                  {editErrors.email && <p className="error-text">{editErrors.email.message}</p>}
-                </div>
-                <div className="field">
-                  <label htmlFor="eb-svc">Service</label>
-                  <select id="eb-svc" {...registerEdit("service_id")}>
-                    <option value="">—</option>
-                    {services.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.name}
-                      </option>
-                    ))}
-                  </select>
+        <Dialog open={Boolean(edit && availability)} onClose={() => setEdit(null)} fullWidth maxWidth="md">
+          <DialogTitle>{t("modalBookingTitle")}</DialogTitle>
+          <Box component="form" id="edit-booking-form" onSubmit={handleSubmitEdit(onSaveEdit)} noValidate>
+            <DialogContent dividers>
+              <Stack spacing={2}>
+                <TextField
+                  {...registerEdit("name", { required: t("valNameRequired") })}
+                  label={t("bookingName")}
+                  fullWidth
+                  required
+                  error={!!editErrors.name}
+                  helperText={editErrors.name?.message}
+                />
+                <TextField
+                  {...registerEdit("email", {
+                    required: t("valEmailRequired"),
+                    pattern: { value: /^[^\s@]+@[^\s@]+\.[^\s@]+$/, message: t("valEmailInvalid") },
+                  })}
+                  label={t("bookingEmail")}
+                  type="email"
+                  fullWidth
+                  required
+                  error={!!editErrors.email}
+                  helperText={editErrors.email?.message}
+                />
+                <FormControl fullWidth>
+                  <InputLabel id="eb-svc-label">{t("bookingServiceOptional")}</InputLabel>
+                  <Controller
+                    name="service_id"
+                    control={editControl}
+                    render={({ field }) => (
+                      <Select labelId="eb-svc-label" label={t("bookingServiceOptional")} {...field}>
+                        <MenuItem value="">—</MenuItem>
+                        {services.map((s) => (
+                          <MenuItem key={s.id} value={String(s.id)}>
+                            {s.name}
+                          </MenuItem>
+                        ))}
+                      </Select>
+                    )}
+                  />
                   {servicesQuery.isError && (
-                    <p className="error-text" role="alert" style={{ marginTop: "0.35rem" }}>
+                    <Alert severity="error" role="alert" sx={{ mt: 1 }}>
                       {servicesQuery.error instanceof Error ? servicesQuery.error.message : t("errorLoad")}
-                    </p>
+                    </Alert>
                   )}
-                </div>
-                <div className="field">
-                  <label htmlFor="eb-date">{t("adminDate")}</label>
-                  <input id="eb-date" type="date" value={pickDate} onChange={(e) => setPickDate(e.target.value)} />
-                </div>
-                <div className="field">
-                  <label htmlFor="eb-slot">{t("modalSlot")}</label>
-                  {editSlotsQuery.isPending && <p className="muted">{t("adminLoading")}</p>}
-                  {editSlotsQuery.isError && (
-                    <p className="error-text" role="alert">
-                      {editSlotsQuery.error instanceof Error ? editSlotsQuery.error.message : t("errorLoad")}
-                    </p>
-                  )}
-                  <select id="eb-slot" value={slotValue} onChange={(e) => setSlotValue(e.target.value)} disabled={editSlotsQuery.isPending || editSlotsQuery.isError}>
-                    {slotChoices.length === 0 && <option value="">{t("modalNoSlotsDay")}</option>}
+                </FormControl>
+                <TextField
+                  label={t("adminDate")}
+                  type="date"
+                  value={pickDate}
+                  onChange={(e) => setPickDate(e.target.value)}
+                  fullWidth
+                  slotProps={{ inputLabel: { shrink: true } }}
+                />
+                <FormControl fullWidth disabled={editSlotsQuery.isPending || editSlotsQuery.isError}>
+                  <InputLabel id="eb-slot-label">{t("modalSlot")}</InputLabel>
+                  <Select
+                    labelId="eb-slot-label"
+                    label={t("modalSlot")}
+                    value={slotValue}
+                    onChange={(e) => setSlotValue(e.target.value)}
+                  >
+                    {slotChoices.length === 0 && <MenuItem value="">{t("modalNoSlotsDay")}</MenuItem>}
                     {slotChoices.map((s) => (
-                      <option key={s.start} value={s.start}>
+                      <MenuItem key={s.start} value={s.start}>
                         {DateTime.fromISO(s.start).setZone(APP_TIMEZONE).toFormat(TIME_24)} –{" "}
                         {DateTime.fromISO(s.end).setZone(APP_TIMEZONE).toFormat(TIME_24)}
                         {!s.available ? ` ${t("modalSlotCurrent")}` : ""}
-                      </option>
+                      </MenuItem>
                     ))}
-                  </select>
-                  <p className="muted" style={{ fontSize: "0.78rem", marginTop: "0.25rem" }}>
+                  </Select>
+                  {editSlotsQuery.isPending && (
+                    <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5 }}>
+                      {t("adminLoading")}
+                    </Typography>
+                  )}
+                  {editSlotsQuery.isError && (
+                    <Alert severity="error" role="alert" sx={{ mt: 1 }}>
+                      {editSlotsQuery.error instanceof Error ? editSlotsQuery.error.message : t("errorLoad")}
+                    </Alert>
+                  )}
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: "block" }}>
                     {t("modalSlotHint")}
-                  </p>
-                </div>
-                <div className="field">
-                  <label htmlFor="eb-notes">{t("adminNotesLabel")}</label>
-                  <textarea id="eb-notes" rows={2} {...registerEdit("notes")} />
-                </div>
+                  </Typography>
+                </FormControl>
+                <TextField {...registerEdit("notes")} label={t("adminNotesLabel")} fullWidth multiline minRows={2} />
                 {editErrors.root && (
-                  <p className="error-text" role="alert">
+                  <Alert severity="error" role="alert">
                     {editErrors.root.message}
-                  </p>
+                  </Alert>
                 )}
-                <div className="modal__actions">
-                  <button type="button" className="btn btn-ghost" onClick={() => setEdit(null)}>
-                    {t("bookingCancel")}
-                  </button>
-                  <button type="submit" className="btn" disabled={isSavingEdit || editSlotsQuery.isError}>
-                    {isSavingEdit ? t("bookingSaving") : t("modalSave")}
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        )}
+              </Stack>
+            </DialogContent>
+            <DialogActions sx={{ px: 3, py: 2 }}>
+              <Button onClick={() => setEdit(null)}>{t("bookingCancel")}</Button>
+              <Button type="submit" form="edit-booking-form" variant="contained" disabled={isSavingEdit || editSlotsQuery.isError}>
+                {isSavingEdit ? t("bookingSaving") : t("modalSave")}
+              </Button>
+            </DialogActions>
+          </Box>
+        </Dialog>
 
-        {toast && (
-          <div className="toast" role="status">
-            {toast}
-          </div>
-        )}
-      </div>
-    </div>
+        <Snackbar
+          open={Boolean(toast)}
+          autoHideDuration={3200}
+          onClose={() => setToast(null)}
+          message={toast ?? ""}
+          anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+        />
+      </Box>
+    </Stack>
   );
 }

@@ -6,12 +6,19 @@ import { APP_TIMEZONE } from "./constants.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const dbPath = process.env.SQLITE_PATH ?? path.join(__dirname, "..", "data", "app.db");
-fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 
-export const db = new DatabaseSync(dbPath);
-db.exec(`PRAGMA journal_mode = WAL;`);
+let dbInitialized = false;
+export let db!: DatabaseSync;
 
-db.exec(`
+export function initDb(): void {
+  if (dbInitialized) return;
+  dbInitialized = true;
+
+  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+  db = new DatabaseSync(dbPath);
+  db.exec(`PRAGMA journal_mode = WAL;`);
+
+  db.exec(`
   CREATE TABLE IF NOT EXISTS bookings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
@@ -56,100 +63,156 @@ db.exec(`
   );
 `);
 
-function tableHasColumn(table: string, col: string): boolean {
-  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
-  return rows.some((r) => r.name === col);
-}
-
-if (!tableHasColumn("bookings", "service_id")) {
-  db.exec(`ALTER TABLE bookings ADD COLUMN service_id INTEGER REFERENCES services(id)`);
-}
-
-const countAvail = db.prepare("SELECT COUNT(*) as c FROM availability_config").get() as { c: number };
-if (countAvail.c === 0) {
-  const wd = JSON.stringify([true, true, true, true, true, false, false]);
-  const tz = getSetting("timezone") ?? APP_TIMEZONE;
-  const sd = getSetting("slot_duration_minutes") ?? "60";
-  const bf = getSetting("buffer_minutes") ?? "0";
-  let ds = "07:00";
-  let de = "16:00";
-  const n = db.prepare("SELECT COUNT(*) as c FROM weekday_availability").get() as { c: number };
-  if (n.c > 0) {
-    const row = db
-      .prepare("SELECT start_minutes, end_minutes FROM weekday_availability WHERE enabled = 1 LIMIT 1")
-      .get() as { start_minutes: number; end_minutes: number } | undefined;
-    if (row) {
-      ds = `${String(Math.floor(row.start_minutes / 60)).padStart(2, "0")}:${String(row.start_minutes % 60).padStart(2, "0")}`;
-      de = `${String(Math.floor(row.end_minutes / 60)).padStart(2, "0")}:${String(row.end_minutes % 60).padStart(2, "0")}`;
-    }
+  function tableHasColumn(table: string, col: string): boolean {
+    const rows = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+    return rows.some((r) => r.name === col);
   }
-  const slotM = parseInt(sd, 10) || 60;
-  db.prepare(
-    `INSERT INTO availability_config (id, working_days, day_start, day_end, breaks, timezone, slot_duration_minutes, buffer_minutes, notifications_enabled)
+
+  if (!tableHasColumn("bookings", "service_id")) {
+    db.exec(`ALTER TABLE bookings ADD COLUMN service_id INTEGER REFERENCES services(id)`);
+  }
+
+  const countAvail = db.prepare("SELECT COUNT(*) as c FROM availability_config").get() as { c: number };
+  if (countAvail.c === 0) {
+    const wd = JSON.stringify([true, true, true, true, true, false, false]);
+    const tz = getSetting("timezone") ?? APP_TIMEZONE;
+    const sd = getSetting("slot_duration_minutes") ?? "60";
+    const bf = getSetting("buffer_minutes") ?? "0";
+    let ds = "07:00";
+    let de = "16:00";
+    const n = db.prepare("SELECT COUNT(*) as c FROM weekday_availability").get() as { c: number };
+    if (n.c > 0) {
+      const row = db
+        .prepare("SELECT start_minutes, end_minutes FROM weekday_availability WHERE enabled = 1 LIMIT 1")
+        .get() as { start_minutes: number; end_minutes: number } | undefined;
+      if (row) {
+        ds = `${String(Math.floor(row.start_minutes / 60)).padStart(2, "0")}:${String(row.start_minutes % 60).padStart(2, "0")}`;
+        de = `${String(Math.floor(row.end_minutes / 60)).padStart(2, "0")}:${String(row.end_minutes % 60).padStart(2, "0")}`;
+      }
+    }
+    const slotM = parseInt(sd, 10) || 60;
+    db.prepare(
+      `INSERT INTO availability_config (id, working_days, day_start, day_end, breaks, timezone, slot_duration_minutes, buffer_minutes, notifications_enabled)
      VALUES (1, ?, ?, ?, '[]', ?, ?, ?, 0)`
-  ).run(wd, ds, de, tz, slotM, parseInt(bf, 10) || 0);
-}
+    ).run(wd, ds, de, tz, slotM, parseInt(bf, 10) || 0);
+  }
 
-try {
-  db.prepare(`UPDATE availability_config SET timezone = ? WHERE 1 = 1`).run(APP_TIMEZONE);
-} catch {}
+  try {
+    db.prepare(`UPDATE availability_config SET timezone = ? WHERE 1 = 1`).run(APP_TIMEZONE);
+  } catch (e) {
+    console.warn("[db] timezone migration:", e);
+  }
 
-try {
-  db.prepare(
-    `UPDATE availability_config SET slot_duration_minutes = 60 WHERE id = 1 AND slot_duration_minutes NOT IN (60, 120)`
-  ).run();
-} catch {}
+  try {
+    db.prepare(
+      `UPDATE availability_config SET slot_duration_minutes = 60 WHERE id = 1 AND slot_duration_minutes NOT IN (60, 120)`
+    ).run();
+  } catch (e) {
+    console.warn("[db] slot duration migration:", e);
+  }
 
-try {
-  db.prepare(
-    `UPDATE availability_config SET
+  try {
+    db.prepare(
+      `UPDATE availability_config SET
       day_start = '07:00',
       day_end = '16:00',
       slot_duration_minutes = 60
     WHERE id = 1 AND day_start = '09:00' AND day_end = '17:00'`
-  ).run();
-} catch {}
-
-try {
-  const row = db.prepare("SELECT day_start, day_end, breaks FROM availability_config WHERE id = 1").get() as
-    | { day_start: string; day_end: string; breaks: string }
-    | undefined;
-  if (row) {
-    const toHour = (t: string) => {
-      const m = t.match(/^(\d{1,2}):(\d{2})$/);
-      if (!m) return t;
-      let h = parseInt(m[1]!, 10);
-      if (!Number.isFinite(h) || h < 0 || h > 23) return t;
-      return `${String(h).padStart(2, "0")}:00`;
-    };
-    let breaksJson = row.breaks;
-    try {
-      const br = JSON.parse(row.breaks) as { start: string; end: string }[];
-      if (Array.isArray(br)) {
-        breaksJson = JSON.stringify(br.map((b) => ({ start: toHour(b.start), end: toHour(b.end) })));
-      }
-    } catch {}
-    db.prepare("UPDATE availability_config SET day_start = ?, day_end = ?, breaks = ? WHERE id = 1").run(
-      toHour(row.day_start),
-      toHour(row.day_end),
-      breaksJson
-    );
+    ).run();
+  } catch (e) {
+    console.warn("[db] legacy hours migration:", e);
   }
-} catch {}
 
-const svcCount = db.prepare("SELECT COUNT(*) as c FROM services").get() as { c: number };
-if (svcCount.c === 0) {
-  db.prepare("INSERT INTO services (name, duration_minutes, price) VALUES (?, ?, ?)").run("Standard appointment", 60, null);
-}
+  try {
+    const row = db.prepare("SELECT day_start, day_end, breaks FROM availability_config WHERE id = 1").get() as
+      | { day_start: string; day_end: string; breaks: string }
+      | undefined;
+    if (row) {
+      const toHour = (t: string) => {
+        const m = t.match(/^(\d{1,2}):(\d{2})$/);
+        if (!m) return t;
+        const h = parseInt(m[1]!, 10);
+        if (!Number.isFinite(h) || h < 0 || h > 23) return t;
+        return `${String(h).padStart(2, "0")}:00`;
+      };
+      let breaksJson = row.breaks;
+      try {
+        const br = JSON.parse(row.breaks) as { start: string; end: string }[];
+        if (Array.isArray(br)) {
+          breaksJson = JSON.stringify(br.map((b) => ({ start: toHour(b.start), end: toHour(b.end) })));
+        }
+      } catch (e) {
+        console.warn("[db] breaks normalization:", e);
+      }
+      db.prepare("UPDATE availability_config SET day_start = ?, day_end = ?, breaks = ? WHERE id = 1").run(
+        toHour(row.day_start),
+        toHour(row.day_end),
+        breaksJson
+      );
+    }
+  } catch (e) {
+    console.warn("[db] hour alignment migration:", e);
+  }
 
-const wn = db.prepare("SELECT COUNT(*) as c FROM weekday_availability").get() as { c: number };
-if (wn.c === 0) {
-  const ins = db.prepare(
-    "INSERT INTO weekday_availability (weekday, enabled, start_minutes, end_minutes) VALUES (?, ?, ?, ?)"
-  );
-  for (let d = 0; d < 7; d++) {
-    const weekend = d === 5 || d === 6;
-    ins.run(d, weekend ? 0 : 1, 7 * 60, 16 * 60);
+  const svcCount = db.prepare("SELECT COUNT(*) as c FROM services").get() as { c: number };
+  if (svcCount.c === 0) {
+    db.prepare("INSERT INTO services (name, duration_minutes, price) VALUES (?, ?, ?)").run("Standard appointment", 60, null);
+  }
+
+  const wn = db.prepare("SELECT COUNT(*) as c FROM weekday_availability").get() as { c: number };
+  if (wn.c === 0) {
+    const ins = db.prepare(
+      "INSERT INTO weekday_availability (weekday, enabled, start_minutes, end_minutes) VALUES (?, ?, ?, ?)"
+    );
+    for (let d = 0; d < 7; d++) {
+      const weekend = d === 5 || d === 6;
+      ins.run(d, weekend ? 0 : 1, 7 * 60, 16 * 60);
+    }
+  }
+
+  if (!getSetting("availability_morning_slots_v1")) {
+    const parseHhMm = (s: string): number | null => {
+      const m = s.match(/^(\d{1,2}):(\d{2})$/);
+      if (!m) return null;
+      const h = parseInt(m[1]!, 10);
+      const min = parseInt(m[2]!, 10);
+      if (!Number.isFinite(h) || h < 0 || h > 23 || min < 0 || min > 59) return null;
+      return h * 60 + min;
+    };
+    try {
+      const row = db.prepare("SELECT day_start, breaks FROM availability_config WHERE id = 1").get() as
+        | { day_start: string; breaks: string }
+        | undefined;
+      if (row) {
+        let nextStart = row.day_start;
+        if (row.day_start === "11:00") nextStart = "07:00";
+
+        let nextBreaks = row.breaks;
+        try {
+          const br = JSON.parse(row.breaks) as { start: string; end: string }[];
+          if (Array.isArray(br)) {
+            const filtered = br.filter((b) => {
+              if (!b || typeof b.start !== "string" || typeof b.end !== "string") return true;
+              const startM = parseHhMm(b.start);
+              const endM = parseHhMm(b.end);
+              if (startM == null || endM == null) return true;
+              if (endM === 11 * 60 && endM - startM >= 180) return false;
+              return true;
+            });
+            if (filtered.length !== br.length) nextBreaks = JSON.stringify(filtered);
+          }
+        } catch (e) {
+          console.warn("[db] morning slots breaks parse:", e);
+        }
+
+        if (nextStart !== row.day_start || nextBreaks !== row.breaks) {
+          db.prepare("UPDATE availability_config SET day_start = ?, breaks = ? WHERE id = 1").run(nextStart, nextBreaks);
+        }
+      }
+    } catch (e) {
+      console.warn("[db] morning slots migration:", e);
+    }
+    setSetting("availability_morning_slots_v1", "1");
   }
 }
 
@@ -163,47 +226,6 @@ export function setSetting(key: string, value: string) {
     key,
     value
   );
-}
-
-if (!getSetting("availability_morning_slots_v1")) {
-  const parseHhMm = (s: string): number | null => {
-    const m = s.match(/^(\d{1,2}):(\d{2})$/);
-    if (!m) return null;
-    const h = parseInt(m[1]!, 10);
-    const min = parseInt(m[2]!, 10);
-    if (!Number.isFinite(h) || h < 0 || h > 23 || min < 0 || min > 59) return null;
-    return h * 60 + min;
-  };
-  try {
-    const row = db.prepare("SELECT day_start, breaks FROM availability_config WHERE id = 1").get() as
-      | { day_start: string; breaks: string }
-      | undefined;
-    if (row) {
-      let nextStart = row.day_start;
-      if (row.day_start === "11:00") nextStart = "07:00";
-
-      let nextBreaks = row.breaks;
-      try {
-        const br = JSON.parse(row.breaks) as { start: string; end: string }[];
-        if (Array.isArray(br)) {
-          const filtered = br.filter((b) => {
-            if (!b || typeof b.start !== "string" || typeof b.end !== "string") return true;
-            const startM = parseHhMm(b.start);
-            const endM = parseHhMm(b.end);
-            if (startM == null || endM == null) return true;
-            if (endM === 11 * 60 && endM - startM >= 180) return false;
-            return true;
-          });
-          if (filtered.length !== br.length) nextBreaks = JSON.stringify(filtered);
-        }
-      } catch {}
-
-      if (nextStart !== row.day_start || nextBreaks !== row.breaks) {
-        db.prepare("UPDATE availability_config SET day_start = ?, breaks = ? WHERE id = 1").run(nextStart, nextBreaks);
-      }
-    }
-  } catch {}
-  setSetting("availability_morning_slots_v1", "1");
 }
 
 export type BreakPeriod = { start: string; end: string };

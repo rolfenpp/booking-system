@@ -30,4 +30,6 @@ export async function invalidateAfterAvailabilityWrite(queryClient: QueryClient)
 
 export async function invalidateAfterServiceWrite(queryClient: QueryClient) {
   await invalidateServices(queryClient);
+  // Booking rows display serviceName from a server join; refresh admin list/calendar without invalidating public slot queries (service CRUD does not change the slot grid).
+  await invalidateAllAdmin(queryClient);
 }
